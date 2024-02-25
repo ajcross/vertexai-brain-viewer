@@ -44,7 +44,6 @@ def endpoint_predict(
     endpoint = aiplatform.Endpoint(endpoint)
 
     prediction = endpoint.predict(instances=instances)
-    print(prediction)
     return prediction
 
 # Flask route decorators map / and /hello to the hello function.
