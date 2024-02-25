@@ -5,14 +5,14 @@ import matplotlib.pyplot as plt
 import io
 import base64
 import numpy as np
-import google
-import google.oauth2.credentials
-from google.auth import compute_engine
-import google.auth.transport.requests
-import requests
+#import google
+#import google.oauth2.credentials
+#from google.auth import compute_engine
+#import google.auth.transport.requests
 import os
 import datetime
 import logging
+from google.cloud import aiplatform
 
 
 # Create an instance of the Flask class that is the WSGI application.
@@ -20,8 +20,6 @@ import logging
 # typically __name__ when using a single module.
 app = Flask(__name__)
 app.logger.setLevel(logging.INFO)
-auth_req = google.auth.transport.requests.Request()
-creds = compute_engine.Credentials()
 
 # VERTEX AI Endpoint
 ENDPOINT_ID = os.getenv("ENDPOINT_ID", None)
@@ -36,14 +34,18 @@ REGION = os.getenv("REGION", None)
 if not(REGION) :
     app.logger.fatal("REGION env variable not defined")
 
-if not(ENDPOINT_ID) or not(PROJECT_ID) or not(REGION):
-    URL=None
-else:
-    URL = f"https://{REGION}-aiplatform.googleapis.com/v1/projects/{PROJECT_ID}/locations/europe-west4/endpoints/{ENDPOINT_ID}:predict"
-
 TITLE = os.getenv("TITLE","")
 
-headers={}
+def endpoint_predict(
+    project: str, location: str, instances: list, endpoint: str
+):
+    aiplatform.init(project=project, location=location)
+
+    endpoint = aiplatform.Endpoint(endpoint)
+
+    prediction = endpoint.predict(instances=instances)
+    print(prediction)
+    return prediction
 
 # Flask route decorators map / and /hello to the hello function.
 # To add other resources, create functions that generate the page contents
@@ -51,37 +53,15 @@ headers={}
 
 @app.route('/', methods=['GET', 'POST'])
 def brain():
-    global headers
-    if not(URL):
+    if not(ENDPOINT_ID) or not(PROJECT_ID) or not(REGION):
         return "Invalid configuration. Check the logs", 500
 
-    # renew token
-    if not(creds.token) or creds.expired:
-        app.logger.warning("refreshing access token")
-        creds.refresh(auth_req)
-        headers = {
-            "Authorization": f"Bearer {creds.token}",
-            "Content-Type" : "application/json"
-        }
-    app.logger.debug(headers)
-
     x = np.random.normal(size = (1024))
+    
+    instances=[ x.tolist() ]
+    resp=endpoint_predict(PROJECT_ID, REGION, instances, ENDPOINT_ID)
 
-    req = { "instances" : [ x.tolist() ]}
-    app.logger.debug(req)
-    resp = requests.post(URL, headers = headers, json = req, allow_redirects=True)
-    if resp.status_code != 200:
-        app.logger.error(resp.status_code)
-        try:
-            app.logger.error(resp.json())
-        except :
-            app.logger.error(resp.content)
-
-        return "Error returned by endpoint. Check the logs", 500
-
-    js=resp.json()
-    app.logger.info(f"""endpoint resp {resp.status_code} Model: {js["modelDisplayName"]} v{js["modelVersionId"]}""")
-    img=js['predictions'][0]
+    img=resp.predictions[0]
 
     imgplot = plt.imshow(img,cmap='gray')
     img = io.BytesIO()
@@ -103,8 +83,8 @@ def brain():
     </head><body>
     <table>
     <tr><td>timestamp<td>{datetime.datetime.now().isoformat()}
-    <tr><td>nodel name<td>{js["modelDisplayName"]}
-    <tr><td>model version<td>{js["modelVersionId"]}
+    <tr><td>model id<td>{resp.deployed_model_id}
+    <tr><td>model version<td>{resp.model_version_id}
     <tr><td colspan="2">
             <img alt="ai generated image" src="data:image/png;base64,{format(b64.decode('utf-8'))}">
             </table>
@@ -114,4 +94,7 @@ def brain():
 if __name__ == '__main__':
     # Run the app server on localhost:4449
     app.run(debug=False, host="0.0.0.0", port=int(os.environ.get("PORT", 8080)))
+
+
+
 
